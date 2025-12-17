@@ -178,6 +178,7 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         
         print(f"[JOIN] Calling call_client.join()...")
         # Pass camera device in client_settings (like pipecat does)
+        # Include both inputs AND publishing settings
         call_client.join(
             room_url,
             token if token else None,
@@ -191,6 +192,19 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
                         },
                     },
                 },
+                "publishing": {
+                    "camera": {
+                        "sendSettings": {
+                            "maxQuality": "high",
+                            "encodings": {
+                                "high": {
+                                    "maxBitrate": 2000000,  # 2 Mbps
+                                    "maxFramerate": video_track.fps,
+                                }
+                            },
+                        }
+                    }
+                }
             }
         )
         print(f"[JOIN] call_client.join() called, waiting for completion...")
@@ -253,43 +267,31 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
             raise
         
         # Wait a moment for connection to stabilize
-        print(f"[SETUP] Waiting 2 seconds for connection to stabilize...")
-        await asyncio.sleep(2)
+        print(f"[SETUP] Waiting 3 seconds for connection to stabilize...")
+        await asyncio.sleep(3)
         print(f"[SETUP] Wait complete")
         
-        # Update inputs to use our camera device (after joining)
-        print(f"[CAMERA] Updating inputs to use camera device '{camera_name}'...")
+        # Verify camera track is active
+        print(f"[CAMERA] Verifying camera track status...")
         try:
-            # Try to update inputs to use our camera device
-            call_client.update_inputs(
-                camera={
-                    "isEnabled": True,
-                    "settings": {
-                        "deviceId": camera_name,
-                    },
-                }
-            )
-            print(f"[CAMERA] ✅ Inputs updated to use camera device")
+            participants = call_client.participants()
+            local_participant = participants.get('local', {})
+            local_media = local_participant.get('media', {})
+            camera_info = local_media.get('camera', {})
+            print(f"[CAMERA] Camera state: {camera_info.get('state')}")
+            print(f"[CAMERA] Camera track ID: {camera_info.get('track', {}).get('id') if camera_info.get('track') else 'None'}")
+            if camera_info.get('state') != 'playable':
+                print(f"[CAMERA] ⚠️  Camera state is not 'playable', it's: {camera_info.get('state')}")
         except Exception as e:
-            print(f"[CAMERA] ⚠️  Could not update inputs (may not be needed): {e}")
-            print(f"[CAMERA] Will try writing frames directly to camera device")
+            print(f"[CAMERA] Could not verify camera status: {e}")
         
-        # Enable video publishing
-        print(f"[VIDEO] Enabling video publishing...")
-        try:
-            call_client.set_video_publish_settings(enabled=True)
-            print(f"[VIDEO] ✅ Video publishing enabled")
-        except Exception as e:
-            print(f"[VIDEO] ❌ Error enabling video publishing: {e}")
-            import traceback
-            traceback.print_exc()
+        # Camera device is already configured in client_settings when joining
+        # No need to update inputs separately - frames are written directly to the camera device
+        print(f"[CAMERA] Camera device configured and ready for frame writing")
         
-        # Check current video settings
-        try:
-            settings = call_client.get_video_publish_settings()
-            print(f"[VIDEO] Current video publish settings: {settings}")
-        except Exception as e:
-            print(f"[VIDEO] Could not get video publish settings: {e}")
+        # Video publishing is enabled via client_settings when joining
+        # No need to call set_video_publish_settings (that method doesn't exist)
+        print(f"[VIDEO] Video publishing configured via client_settings in join()")
         
         # Check participants to see if we're visible
         try:
@@ -298,12 +300,20 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         except Exception as e:
             print(f"[VIDEO] Could not get participants: {e}")
         
+        # Wait a bit more to ensure camera device is fully ready
+        print(f"[FRAMES] Waiting 1 second for camera device to be fully ready...")
+        await asyncio.sleep(1)
+        
         # Start sending video frames
         print(f"[FRAMES] Starting video playback...")
         print(f"[FRAMES] Frame interval: {1.0 / video_track.fps:.4f} seconds ({video_track.fps} fps)")
         frame_interval = 1.0 / video_track.fps
         frame_count = 0
         error_count = 0
+        
+        # Verify camera device is ready
+        print(f"[FRAMES] Camera device object: {camera}")
+        print(f"[FRAMES] Camera device name: {camera_name}")
         
         async def send_video_frames():
             """Continuously send video frames to the camera device."""
@@ -343,9 +353,22 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
                     
                     # Write frame to camera device
                     try:
-                        camera.write_frame(frame_bytes)
-                        if frame_count == 1:
-                            print(f"[FRAMES] ✅ First frame written successfully ({frame_size} bytes)")
+                        # For the first few frames, write immediately to establish the stream
+                        if frame_count <= 5:
+                            camera.write_frame(frame_bytes)
+                            if frame_count == 1:
+                                print(f"[FRAMES] ✅ First frame written successfully ({frame_size} bytes)")
+                                # Also try writing a test pattern to verify camera works
+                                print(f"[FRAMES] Writing test pattern to verify camera...")
+                                test_frame = np.ones((video_track.height, video_track.width, 3), dtype=np.uint8) * 255  # White frame
+                                test_frame[:, :, 0] = 0  # Red channel = 0 (cyan frame)
+                                test_bytes = test_frame.tobytes()
+                                camera.write_frame(test_bytes)
+                                await asyncio.sleep(0.1)
+                                # Write actual frame again
+                                camera.write_frame(frame_bytes)
+                        else:
+                            camera.write_frame(frame_bytes)
                     except Exception as e:
                         error_count += 1
                         if error_count <= 5:  # Only log first 5 errors
