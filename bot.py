@@ -10,7 +10,6 @@ import numpy as np
 from typing import Optional
 
 try:
-    from daily import Daily
     from daily import CallClient
 except ImportError:
     print("Error: daily-python package not installed.")
@@ -72,8 +71,8 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
     
     video_path = os.path.abspath(video_path)
     
-    # Initialize Daily client
-    daily = Daily()
+    # Initialize Daily CallClient
+    call_client = CallClient()
     video_track = None
     
     try:
@@ -94,7 +93,7 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         if token:
             join_config["token"] = token
         
-        await daily.join(**join_config)
+        await call_client.join(**join_config)
         print("✅ Successfully joined the room!")
         
         # Wait a moment for connection to stabilize
@@ -102,7 +101,7 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         
         # Enable video publishing
         print("Enabling video publishing...")
-        await daily.set_video_publish_settings(enabled=True)
+        await call_client.set_video_publish_settings(enabled=True)
         
         # Create a custom video source from the file
         # Daily Python SDK supports custom video sources
@@ -133,7 +132,7 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         print("Attempting to set video source...")
         
         # List available video-related methods for debugging
-        video_methods = [m for m in dir(daily) if 'video' in m.lower() and not m.startswith('_')]
+        video_methods = [m for m in dir(call_client) if 'video' in m.lower() and not m.startswith('_')]
         if video_methods:
             print(f"Available video methods: {', '.join(video_methods)}")
         
@@ -141,10 +140,10 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         video_set = False
         
         # Method 1: Check if there's a set_video_source or similar method
-        for method_name in ['set_video_source', 'set_input_video', 'set_video_input', 'publish_video']:
-            if hasattr(daily, method_name):
+        for method_name in ['set_video_source', 'set_input_video', 'set_video_input', 'publish_video', 'update_input_video']:
+            if hasattr(call_client, method_name):
                 try:
-                    method = getattr(daily, method_name)
+                    method = getattr(call_client, method_name)
                     # Try calling with the generator or frames
                     if asyncio.iscoroutinefunction(method):
                         await method(video_frame_generator())
@@ -185,7 +184,7 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         if video_track:
             video_track.release()
         try:
-            await daily.leave()
+            await call_client.leave()
             print("Left the room")
         except:
             pass
