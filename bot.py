@@ -131,9 +131,12 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         future = asyncio.get_event_loop().create_future()
         
         callback_called = False
+        callback_data = None
+        callback_error = None
+        
         def completion_callback(*args):
             """Handle join completion callback."""
-            nonlocal callback_called
+            nonlocal callback_called, callback_data, callback_error
             callback_called = True
             print(f"[JOIN] Completion callback called with {len(args)} arguments")
             try:
@@ -142,18 +145,36 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
                     print(f"[JOIN] Callback args[0] type: {type(args[0])}, args[1] type: {type(args[1])}")
                     print(f"[JOIN] Callback args[0]: {args[0]}")
                     print(f"[JOIN] Callback args[1]: {args[1]}")
-                    future.set_result((args[0], args[1]))
+                    callback_data = args[0]
+                    callback_error = args[1]
+                    # Only set result if future is not done/cancelled
+                    if not future.done():
+                        future.set_result((args[0], args[1]))
+                    else:
+                        print(f"[JOIN] ⚠️  Future already done, callback was delayed")
                 elif len(args) == 1:
                     print(f"[JOIN] Callback single arg type: {type(args[0])}, value: {args[0]}")
-                    future.set_result((args[0], None))
+                    callback_data = args[0]
+                    callback_error = None
+                    if not future.done():
+                        future.set_result((args[0], None))
+                    else:
+                        print(f"[JOIN] ⚠️  Future already done, callback was delayed")
                 else:
                     print(f"[JOIN] Callback no args")
-                    future.set_result((None, None))
+                    callback_data = None
+                    callback_error = None
+                    if not future.done():
+                        future.set_result((None, None))
+                    else:
+                        print(f"[JOIN] ⚠️  Future already done, callback was delayed")
             except Exception as e:
                 print(f"[JOIN] Error in completion callback: {e}")
                 import traceback
                 traceback.print_exc()
-                future.set_exception(e)
+                callback_error = str(e)
+                if not future.done():
+                    future.set_exception(e)
         
         print(f"[JOIN] Calling call_client.join()...")
         # Pass camera device in client_settings (like pipecat does)
@@ -174,16 +195,36 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         )
         print(f"[JOIN] call_client.join() called, waiting for completion...")
         
-        # Wait for join to complete with timeout
+        # Wait for join to complete with longer timeout
+        # The callback may be delayed, so we use a longer timeout
         try:
-            data, error = await asyncio.wait_for(future, timeout=10.0)
+            data, error = await asyncio.wait_for(future, timeout=30.0)
             print(f"[JOIN] Future completed")
             print(f"[JOIN] Data: {data}")
             print(f"[JOIN] Error: {error}")
         except asyncio.TimeoutError:
-            print(f"[JOIN] ⚠️  Join timed out after 10 seconds!")
+            print(f"[JOIN] ⚠️  Join timed out after 30 seconds!")
             print(f"[JOIN] Callback was called: {callback_called}")
-            raise Exception("Join operation timed out")
+            
+            # If callback was called but future timed out, use callback data
+            if callback_called and callback_data is not None:
+                print(f"[JOIN] ✅ Using callback data (callback was delayed)")
+                data = callback_data
+                error = callback_error
+            else:
+                # Check if we're actually joined by checking participants
+                try:
+                    participants = call_client.participants()
+                    if participants and 'local' in participants:
+                        print(f"[JOIN] ✅ Actually joined! (verified via participants)")
+                        print(f"[JOIN] Local participant: {participants['local']}")
+                        data = participants
+                        error = None
+                    else:
+                        raise Exception("Join operation timed out and not actually joined")
+                except Exception as e:
+                    print(f"[JOIN] ❌ Not actually joined: {e}")
+                    raise Exception("Join operation timed out")
         
         if error:
             print(f"[JOIN] ❌ Join error: {error}")
