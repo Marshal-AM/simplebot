@@ -195,13 +195,7 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
                 "publishing": {
                     "camera": {
                         "sendSettings": {
-                            "maxQuality": "high",
-                            "encodings": {
-                                "high": {
-                                    "maxBitrate": 2000000,  # 2 Mbps
-                                    "maxFramerate": video_track.fps,
-                                }
-                            },
+                            "maxQuality": "high"
                         }
                     }
                 }
