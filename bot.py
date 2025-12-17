@@ -98,87 +98,197 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         
         # Join the room
         # CallClient.join() takes positional arguments: room_url, token, completion, client_settings
-        print(f"Joining room: {room_url}")
+        print(f"[JOIN] Starting join process...")
+        print(f"[JOIN] Room URL: {room_url}")
+        print(f"[JOIN] Token: {'Provided' if token else 'None'}")
         
         # Set user name
+        print(f"[JOIN] Setting user name to 'Video Bot'...")
         call_client.set_user_name("Video Bot")
+        print(f"[JOIN] User name set")
         
         # Join with positional arguments (room_url, token, completion callback)
+        print(f"[JOIN] Creating future for join completion...")
         future = asyncio.get_event_loop().create_future()
         
+        callback_called = False
         def completion_callback(*args):
             """Handle join completion callback."""
+            nonlocal callback_called
+            callback_called = True
+            print(f"[JOIN] Completion callback called with {len(args)} arguments")
             try:
                 if len(args) >= 2:
                     # (data, error) format
+                    print(f"[JOIN] Callback args[0] type: {type(args[0])}, args[1] type: {type(args[1])}")
+                    print(f"[JOIN] Callback args[0]: {args[0]}")
+                    print(f"[JOIN] Callback args[1]: {args[1]}")
                     future.set_result((args[0], args[1]))
                 elif len(args) == 1:
+                    print(f"[JOIN] Callback single arg type: {type(args[0])}, value: {args[0]}")
                     future.set_result((args[0], None))
                 else:
+                    print(f"[JOIN] Callback no args")
                     future.set_result((None, None))
             except Exception as e:
+                print(f"[JOIN] Error in completion callback: {e}")
+                import traceback
+                traceback.print_exc()
                 future.set_exception(e)
         
+        print(f"[JOIN] Calling call_client.join()...")
         call_client.join(
             room_url,
             token if token else None,
             completion=completion_callback
         )
+        print(f"[JOIN] call_client.join() called, waiting for completion...")
         
-        # Wait for join to complete
-        data, error = await future
+        # Wait for join to complete with timeout
+        try:
+            data, error = await asyncio.wait_for(future, timeout=10.0)
+            print(f"[JOIN] Future completed")
+            print(f"[JOIN] Data: {data}")
+            print(f"[JOIN] Error: {error}")
+        except asyncio.TimeoutError:
+            print(f"[JOIN] ⚠️  Join timed out after 10 seconds!")
+            print(f"[JOIN] Callback was called: {callback_called}")
+            raise Exception("Join operation timed out")
+        
         if error:
+            print(f"[JOIN] ❌ Join error: {error}")
             raise Exception(f"Failed to join room: {error}")
         
         print("✅ Successfully joined the room!")
         print(f"   Participant data: {data}")
         
         # Wait a moment for connection to stabilize
+        print(f"[SETUP] Waiting 2 seconds for connection to stabilize...")
         await asyncio.sleep(2)
+        print(f"[SETUP] Wait complete")
         
         # Create virtual camera device (like pipecat does)
-        print("Creating virtual camera device...")
-        camera = Daily.create_camera_device(
-            "video-bot-camera",
-            width=video_track.width,
-            height=video_track.height,
-            color_format="RGB"
-        )
+        print(f"[CAMERA] Creating virtual camera device...")
+        print(f"[CAMERA] Width: {video_track.width}, Height: {video_track.height}, FPS: {video_track.fps}")
+        try:
+            camera = Daily.create_camera_device(
+                "video-bot-camera",
+                width=video_track.width,
+                height=video_track.height,
+                color_format="RGB"
+            )
+            print(f"[CAMERA] ✅ Camera device created: {camera}")
+            print(f"[CAMERA] Camera device type: {type(camera)}")
+        except Exception as e:
+            print(f"[CAMERA] ❌ Error creating camera device: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
         
         # Select the camera device
-        Daily.select_camera_device("video-bot-camera")
-        print("✅ Camera device created and selected")
+        print(f"[CAMERA] Selecting camera device 'video-bot-camera'...")
+        try:
+            Daily.select_camera_device("video-bot-camera")
+            print(f"[CAMERA] ✅ Camera device selected")
+        except Exception as e:
+            print(f"[CAMERA] ❌ Error selecting camera device: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
         
         # Enable video publishing
-        print("Enabling video publishing...")
-        call_client.set_video_publish_settings(enabled=True)
+        print(f"[VIDEO] Enabling video publishing...")
+        try:
+            call_client.set_video_publish_settings(enabled=True)
+            print(f"[VIDEO] ✅ Video publishing enabled")
+        except Exception as e:
+            print(f"[VIDEO] ❌ Error enabling video publishing: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Check current video settings
+        try:
+            settings = call_client.get_video_publish_settings()
+            print(f"[VIDEO] Current video publish settings: {settings}")
+        except Exception as e:
+            print(f"[VIDEO] Could not get video publish settings: {e}")
+        
+        # Check participants to see if we're visible
+        try:
+            participants = call_client.participants()
+            print(f"[VIDEO] Current participants: {participants}")
+        except Exception as e:
+            print(f"[VIDEO] Could not get participants: {e}")
         
         # Start sending video frames
-        print("Starting video playback...")
+        print(f"[FRAMES] Starting video playback...")
+        print(f"[FRAMES] Frame interval: {1.0 / video_track.fps:.4f} seconds ({video_track.fps} fps)")
         frame_interval = 1.0 / video_track.fps
+        frame_count = 0
+        error_count = 0
         
         async def send_video_frames():
             """Continuously send video frames to the camera device."""
+            nonlocal frame_count, error_count
+            loop_count = 0
+            
             while True:
-                frame = video_track.read_frame()
-                if frame is None:
-                    # Loop the video
-                    video_track.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                try:
                     frame = video_track.read_frame()
                     if frame is None:
-                        break
-                
-                # Convert numpy array to bytes (RGB format)
-                # Frame is already RGB from VideoFileTrack.read_frame()
-                frame_bytes = frame.tobytes()
-                
-                # Write frame to camera device
-                camera.write_frame(frame_bytes)
-                
-                await asyncio.sleep(frame_interval)
+                        # Loop the video
+                        print(f"[FRAMES] End of video reached, looping...")
+                        video_track.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        frame = video_track.read_frame()
+                        if frame is None:
+                            print(f"[FRAMES] ❌ Could not read frame after loop reset")
+                            break
+                        loop_count += 1
+                        print(f"[FRAMES] Video loop #{loop_count}")
+                    
+                    frame_count += 1
+                    if frame_count % 30 == 0:  # Log every 30 frames
+                        print(f"[FRAMES] Sent {frame_count} frames (loop #{loop_count})")
+                    
+                    # Convert numpy array to bytes (RGB format)
+                    # Frame is already RGB from VideoFileTrack.read_frame()
+                    frame_bytes = frame.tobytes()
+                    frame_size = len(frame_bytes)
+                    expected_size = video_track.width * video_track.height * 3  # RGB = 3 bytes per pixel
+                    
+                    if frame_count == 1:
+                        print(f"[FRAMES] First frame - size: {frame_size} bytes, expected: {expected_size} bytes")
+                        print(f"[FRAMES] Frame shape: {frame.shape}, dtype: {frame.dtype}")
+                    
+                    if frame_size != expected_size:
+                        print(f"[FRAMES] ⚠️  Frame size mismatch! Expected {expected_size}, got {frame_size}")
+                    
+                    # Write frame to camera device
+                    try:
+                        camera.write_frame(frame_bytes)
+                        if frame_count == 1:
+                            print(f"[FRAMES] ✅ First frame written successfully ({frame_size} bytes)")
+                    except Exception as e:
+                        error_count += 1
+                        if error_count <= 5:  # Only log first 5 errors
+                            print(f"[FRAMES] ❌ Error writing frame #{frame_count}: {e}")
+                            import traceback
+                            traceback.print_exc()
+                        if error_count == 5:
+                            print(f"[FRAMES] ⚠️  Suppressing further write errors...")
+                    
+                    await asyncio.sleep(frame_interval)
+                    
+                except Exception as e:
+                    print(f"[FRAMES] ❌ Exception in send_video_frames: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    await asyncio.sleep(1)  # Wait a bit before retrying
         
         # Start sending frames in background
+        print(f"[FRAMES] Creating frame sending task...")
         frame_task = asyncio.create_task(send_video_frames())
+        print(f"[FRAMES] ✅ Frame task created and started")
         
         print("\n✅ Bot is connected and streaming video!")
         print("   Video should appear in the room now.")
@@ -188,12 +298,15 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         try:
             await frame_task
         except KeyboardInterrupt:
-            print("\nStopping bot...")
+            print("\n[SHUTDOWN] Stopping bot...")
             frame_task.cancel()
             try:
                 await frame_task
             except asyncio.CancelledError:
-                pass
+                print("[SHUTDOWN] Frame task cancelled")
+        
+        print(f"[SHUTDOWN] Total frames sent: {frame_count}")
+        print(f"[SHUTDOWN] Total errors: {error_count}")
         
     except Exception as e:
         print(f"❌ Error: {e}")
