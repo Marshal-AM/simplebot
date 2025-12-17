@@ -96,6 +96,25 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         print(f"Loading video file: {video_path}")
         video_track = VideoFileTrack(video_path)
         
+        # Create virtual camera device BEFORE joining (like pipecat does)
+        print(f"[CAMERA] Creating virtual camera device...")
+        print(f"[CAMERA] Width: {video_track.width}, Height: {video_track.height}, FPS: {video_track.fps}")
+        camera_name = "video-bot-camera"
+        try:
+            camera = Daily.create_camera_device(
+                camera_name,
+                width=video_track.width,
+                height=video_track.height,
+                color_format="RGB"
+            )
+            print(f"[CAMERA] ✅ Camera device created: {camera}")
+            print(f"[CAMERA] Camera device type: {type(camera)}")
+        except Exception as e:
+            print(f"[CAMERA] ❌ Error creating camera device: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+        
         # Join the room
         # CallClient.join() takes positional arguments: room_url, token, completion, client_settings
         print(f"[JOIN] Starting join process...")
@@ -137,10 +156,21 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
                 future.set_exception(e)
         
         print(f"[JOIN] Calling call_client.join()...")
+        # Pass camera device in client_settings (like pipecat does)
         call_client.join(
             room_url,
             token if token else None,
-            completion=completion_callback
+            completion=completion_callback,
+            client_settings={
+                "inputs": {
+                    "camera": {
+                        "isEnabled": True,
+                        "settings": {
+                            "deviceId": camera_name,
+                        },
+                    },
+                },
+            }
         )
         print(f"[JOIN] call_client.join() called, waiting for completion...")
         
@@ -162,17 +192,13 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         print("✅ Successfully joined the room!")
         print(f"   Participant data: {data}")
         
-        # Wait a moment for connection to stabilize
-        print(f"[SETUP] Waiting 2 seconds for connection to stabilize...")
-        await asyncio.sleep(2)
-        print(f"[SETUP] Wait complete")
-        
-        # Create virtual camera device (like pipecat does)
+        # Create virtual camera device BEFORE joining (like pipecat does)
         print(f"[CAMERA] Creating virtual camera device...")
         print(f"[CAMERA] Width: {video_track.width}, Height: {video_track.height}, FPS: {video_track.fps}")
+        camera_name = "video-bot-camera"
         try:
             camera = Daily.create_camera_device(
-                "video-bot-camera",
+                camera_name,
                 width=video_track.width,
                 height=video_track.height,
                 color_format="RGB"
@@ -185,16 +211,27 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
             traceback.print_exc()
             raise
         
-        # Select the camera device
-        print(f"[CAMERA] Selecting camera device 'video-bot-camera'...")
+        # Wait a moment for connection to stabilize
+        print(f"[SETUP] Waiting 2 seconds for connection to stabilize...")
+        await asyncio.sleep(2)
+        print(f"[SETUP] Wait complete")
+        
+        # Update inputs to use our camera device (after joining)
+        print(f"[CAMERA] Updating inputs to use camera device '{camera_name}'...")
         try:
-            Daily.select_camera_device("video-bot-camera")
-            print(f"[CAMERA] ✅ Camera device selected")
+            # Try to update inputs to use our camera device
+            call_client.update_inputs(
+                camera={
+                    "isEnabled": True,
+                    "settings": {
+                        "deviceId": camera_name,
+                    },
+                }
+            )
+            print(f"[CAMERA] ✅ Inputs updated to use camera device")
         except Exception as e:
-            print(f"[CAMERA] ❌ Error selecting camera device: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+            print(f"[CAMERA] ⚠️  Could not update inputs (may not be needed): {e}")
+            print(f"[CAMERA] Will try writing frames directly to camera device")
         
         # Enable video publishing
         print(f"[VIDEO] Enabling video publishing...")
