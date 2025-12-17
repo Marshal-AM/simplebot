@@ -10,11 +10,22 @@ import numpy as np
 from typing import Optional
 
 try:
-    from daily import CallClient
+    from daily import CallClient, Daily
 except ImportError:
     print("Error: daily-python package not installed.")
     print("Install it with: pip install daily-python")
     sys.exit(1)
+
+# Initialize Daily core context (required before creating CallClient)
+# This must be called once before any CallClient instances are created
+_daily_initialized = False
+
+def _ensure_daily_initialized():
+    """Ensure Daily is initialized before creating CallClient."""
+    global _daily_initialized
+    if not _daily_initialized:
+        Daily.init()
+        _daily_initialized = True
 
 try:
     import cv2
@@ -71,8 +82,13 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
     
     video_path = os.path.abspath(video_path)
     
-    # Initialize Daily CallClient
-    call_client = CallClient()
+    # Initialize Daily core context (MUST be called before creating CallClient)
+    print("Initializing Daily core context...")
+    _ensure_daily_initialized()
+    
+    # Create CallClient with event handler
+    print("Creating CallClient...")
+    call_client = CallClient(event_handler=None)  # We don't need event handlers for simple video publishing
     video_track = None
     
     try:
