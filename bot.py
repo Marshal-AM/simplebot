@@ -97,19 +97,40 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
         video_track = VideoFileTrack(video_path)
         
         # Join the room
+        # CallClient.join() takes positional arguments: room_url, token, completion, client_settings
         print(f"Joining room: {room_url}")
-        join_config = {
-            "url": room_url,
-            "properties": {
-                "user_name": "Video Bot",
-                "is_owner": False
-            }
-        }
         
-        if token:
-            join_config["token"] = token
+        # Set user name
+        call_client.set_user_name("Video Bot")
         
-        await call_client.join(**join_config)
+        # Join with positional arguments (room_url, token, completion callback)
+        future = asyncio.get_event_loop().create_future()
+        
+        def completion_callback(*args):
+            """Handle join completion callback."""
+            try:
+                if len(args) >= 2:
+                    # (data, error) format
+                    future.set_result((args[0], args[1]))
+                elif len(args) == 1:
+                    future.set_result((args[0], None))
+                else:
+                    future.set_result((None, None))
+            except Exception as e:
+                future.set_exception(e)
+        
+        call_client.join(
+            room_url,
+            token if token else None,
+            completion=completion_callback
+        )
+        
+        # Wait for join to complete
+        data, error = await future
+        if error:
+            raise Exception(f"Failed to join room: {error}")
+        
+        print("✅ Successfully joined the room!")
         print("✅ Successfully joined the room!")
         
         # Wait a moment for connection to stabilize
