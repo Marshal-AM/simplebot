@@ -1,20 +1,27 @@
 {
-  "name": "daily-video-bot",
+  "name": "livekit-video-bot",
   "version": "1.0.0",
-  "description": "Daily.co room with video bot",
+  "description": "LiveKit room with video bot",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"
   },
-  "keywords": ["daily", "webrtc", "video", "bot"],
+  "keywords": [
+    "livekit",
+    "webrtc",
+    "video",
+    "bot"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
-    "axios": "^1.6.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "livekit-server-sdk": "^2.0.0",
+    "livekit-client": "^2.0.0",
+    "puppeteer": "^24.15.0"
   }
 }
-
