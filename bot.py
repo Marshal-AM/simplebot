@@ -10,7 +10,7 @@ import numpy as np
 from typing import Optional
 
 try:
-    from daily import CallClient, Daily
+    from daily import CallClient, Daily, VirtualCameraDevice, VideoFrame
 except ImportError:
     print("Error: daily-python package not installed.")
     print("Install it with: pip install daily-python")
@@ -131,24 +131,34 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
             raise Exception(f"Failed to join room: {error}")
         
         print("✅ Successfully joined the room!")
-        print("✅ Successfully joined the room!")
+        print(f"   Participant data: {data}")
         
         # Wait a moment for connection to stabilize
         await asyncio.sleep(2)
         
+        # Create virtual camera device (like pipecat does)
+        print("Creating virtual camera device...")
+        camera = Daily.create_camera_device(
+            "video-bot-camera",
+            width=video_track.width,
+            height=video_track.height,
+            color_format="RGB"
+        )
+        
+        # Select the camera device
+        Daily.select_camera_device("video-bot-camera")
+        print("✅ Camera device created and selected")
+        
         # Enable video publishing
         print("Enabling video publishing...")
-        await call_client.set_video_publish_settings(enabled=True)
+        call_client.set_video_publish_settings(enabled=True)
         
-        # Create a custom video source from the file
-        # Daily Python SDK supports custom video sources
-        print("Creating video source from file...")
-        
+        # Start sending video frames
+        print("Starting video playback...")
         frame_interval = 1.0 / video_track.fps
         
-        # Create a function that provides video frames
-        async def video_frame_generator():
-            """Generator that yields video frames."""
+        async def send_video_frames():
+            """Continuously send video frames to the camera device."""
             while True:
                 frame = video_track.read_frame()
                 if frame is None:
@@ -158,60 +168,32 @@ async def publish_video_file(room_url: str, token: str, video_path: str):
                     if frame is None:
                         break
                 
-                # Convert to the format Daily expects (typically RGB or YUV)
-                # Daily Python SDK may expect frames in a specific format
-                yield frame
+                # Convert numpy array to bytes (RGB format)
+                # Frame is already RGB from VideoFileTrack.read_frame()
+                frame_bytes = frame.tobytes()
+                
+                # Write frame to camera device
+                camera.write_frame(frame_bytes)
+                
                 await asyncio.sleep(frame_interval)
         
-        # Set the video source
-        # Daily Python SDK API - check documentation for exact method names
-        # Common patterns: set_video_source, set_input_video, or publish_video_frame
-        print("Attempting to set video source...")
+        # Start sending frames in background
+        frame_task = asyncio.create_task(send_video_frames())
         
-        # List available video-related methods for debugging
-        video_methods = [m for m in dir(call_client) if 'video' in m.lower() and not m.startswith('_')]
-        if video_methods:
-            print(f"Available video methods: {', '.join(video_methods)}")
-        
-        # Try to set video source using common API patterns
-        video_set = False
-        
-        # Method 1: Check if there's a set_video_source or similar method
-        for method_name in ['set_video_source', 'set_input_video', 'set_video_input', 'publish_video', 'update_input_video']:
-            if hasattr(call_client, method_name):
-                try:
-                    method = getattr(call_client, method_name)
-                    # Try calling with the generator or frames
-                    if asyncio.iscoroutinefunction(method):
-                        await method(video_frame_generator())
-                    else:
-                        method(video_frame_generator())
-                    print(f"✅ Video source set using {method_name}")
-                    video_set = True
-                    break
-                except Exception as e:
-                    print(f"   {method_name} failed: {e}")
-                    continue
-        
-        if not video_set:
-            print("⚠️  Could not automatically set video source.")
-            print("   The Daily Python SDK may require a different approach.")
-            print("   Please check the daily-python documentation for:")
-            print("   - How to create custom video tracks")
-            print("   - How to publish video from file/frames")
-            print("   - Available video input methods")
-            print("\n   Connection is active. Video publishing may need manual configuration.")
-        
-        print("\n✅ Bot is connected to the room!")
-        print("   Video should appear if video source was set successfully.")
+        print("\n✅ Bot is connected and streaming video!")
+        print("   Video should appear in the room now.")
         print("   Press Ctrl+C to stop.\n")
         
         # Keep the bot running
         try:
-            while True:
-                await asyncio.sleep(1)
+            await frame_task
         except KeyboardInterrupt:
             print("\nStopping bot...")
+            frame_task.cancel()
+            try:
+                await frame_task
+            except asyncio.CancelledError:
+                pass
         
     except Exception as e:
         print(f"❌ Error: {e}")
